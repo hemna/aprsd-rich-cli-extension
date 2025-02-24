@@ -1,0 +1,1 @@
+from aprsd_rich_cli_extension.cmds import rich  # noqa: F401
