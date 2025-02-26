@@ -1,0 +1,4 @@
+aprsd>=4.1.0
+oslo_config
+click
+textual
