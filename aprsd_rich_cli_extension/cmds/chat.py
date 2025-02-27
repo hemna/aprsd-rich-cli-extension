@@ -1,5 +1,5 @@
 """
-Listen to aprs packets and show them.
+APRS Chat for the terminal!
 
 See https://textual.textualize.io/blog/2024/09/15/anatomy-of-a-textual-user-interface/
 """
@@ -32,30 +32,33 @@ from aprsd import (
 from aprsd import client as aprsd_client
 from aprsd.client import client_factory
 from aprsd.packets import core
-from aprsd.packets import log as packet_log
 from aprsd.stats import collector
 from aprsd.threads import aprsd as aprsd_threads
-from aprsd.threads import keepalive, rx
-from aprsd.utils import singleton
+from aprsd.threads import keepalive, rx, service, tx
 from haversine import Unit, haversine
 from loguru import logger
 from oslo_config import cfg
 from rich import box
 from rich.panel import Panel
 from rich.text import Text
-from textual import work
+from textual import on, work
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.reactive import Reactive
-from textual.screen import Screen
+from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Input, Label
+from textual.widgets import (
+    Button,
+    Footer,
+    Input,
+    TabbedContent,
+    TabPane,
+)
 
 # Import the extension's configuration options
 from aprsd_rich_cli_extension import (
     cmds,  # noqa
-    conf,  # noqa
 )
 
 LOG = logging.getLogger("APRSD")
@@ -83,37 +86,9 @@ def signal_handler(sig, frame):
         collector.Collector().collect()
 
 
-@singleton
-class ServerThreads:
-    """Registry for threads that the server command runs.
-
-    This enables extensions to register a thread to run during
-    the server command.
-
-    """
-
-    def __init__(self):
-        self.threads: list[aprsd_threads.APRSDThread] = []
-
-    def register(self, thread: aprsd_threads.APRSDThread):
-        if not isinstance(thread, aprsd_threads.APRSDThread):
-            raise TypeError(f"Thread {thread} is not an APRSDThread")
-        self.threads.append(thread)
-
-    def unregister(self, thread: aprsd_threads.APRSDThread):
-        if not isinstance(thread, aprsd_threads.APRSDThread):
-            raise TypeError(f"Thread {thread} is not an APRSDThread")
-        self.threads.remove(thread)
-
-    def start(self):
-        """Start all threads in the list."""
-        for thread in self.threads:
-            thread.start()
-
-    def join(self):
-        """Join all the threads in the list"""
-        for thread in self.threads:
-            thread.join()
+def _get_scroll_id(callsign: str) -> str:
+    """Get the scroll id for a callsign."""
+    return f"{callsign}-scroll"
 
 
 class APRSDListenProcessThread(rx.APRSDFilterThread):
@@ -121,107 +96,50 @@ class APRSDListenProcessThread(rx.APRSDFilterThread):
         self,
         packet_queue,
         processed_queue,
-        log_packets=False,
     ):
         super().__init__("ListenProcThread", packet_queue)
+        # The processed queue are packets that need to be displayed
+        # in the UI
         self.processed_queue = processed_queue
-        self.log_packets = True
-
-    def print_packet(self, packet):
-        if self.log_packets:
-            packet_log.log(packet)
 
     def process_packet(self, packet: type[core.Packet]):
+        """Process a packet and add it to the processed queue."""
         self.processed_queue.put(packet)
 
 
-class PacketStats(Widget):
-    def __init__(self):
-        self.packet_count = 0
-        self.packet_types = {}
+class APRSTXThread(aprsd_threads.APRSDThread):
+    """Thread to pull messages from the queue and send them to the APRS server.
 
-    def compose(self) -> ComposeResult:
-        yield Label(f"Packet Count: {self.packet_count}")
-        yield Label(f"Packet Types: {self.packet_types}")
+    We have to do this to allow the UI to update while the thread is sending messages.
 
-    def update(self, packet: type[core.Packet]):
-        self.packet_count += 1
-        self.packet_types[packet.__class__.__name__] = (
-            self.packet_types.get(packet.__class__.__name__, 0) + 1
-        )
+    """
 
+    def __init__(self, packet_queue):
+        super().__init__("APRSTXThread")
+        self.tx_queue = packet_queue
 
-class HeaderConnection(Horizontal):
-    """Display the title / subtitle in the header."""
-
-    text: Reactive[str] = Reactive("")
-    """The main title text."""
-
-    sub_text = Reactive("")
-    """The sub-title text."""
-
-    def render(self) -> RenderResult:
-        """Render the title and sub-title.
-
-        Returns:
-            The value to render.
-        """
-        text = Text(self.text, no_wrap=True, overflow="ellipsis")
-        if self.sub_text:
-            text.append(" — ")
-            text.append(self.sub_text, "yellow")
-        return text
-
-
-class HeaderFilter(Horizontal):
-    """Display the filter in the header."""
-
-    text: Reactive[str] = Reactive("")
-    """The main title text."""
-
-    sub_text = Reactive("")
-    """The sub-title text."""
-
-    def render(self) -> RenderResult:
-        """Render the title and sub-title.
-
-        Returns:
-            The value to render.
-        """
-        text = Text(self.text, no_wrap=True, overflow="ellipsis")
-        if self.sub_text:
-            text.append(" — ")
-            text.append("Num Packets: ")
-            text.append(self.sub_text, "yellow")
-        return text
-
-
-class HeaderVersion(Horizontal):
-    """Display the version in the header."""
-
-    text: Reactive[str] = Reactive("")
-    """The main title text."""
-
-    def render(self) -> RenderResult:
-        return Text(f"APRSD : {aprsd.__version__}", no_wrap=True, overflow="ellipsis")
-
-
-class AppHeader(Horizontal):
-    """The header of the app."""
-
-    def __init__(self, filter: str):
-        super().__init__()
-        f = list(filter)
-        self.filter = " ".join(f)
-
-    def compose(self) -> ComposeResult:
-        yield HeaderConnection(id="app-connection")
-        yield HeaderFilter(id="app-filter")
-        yield HeaderVersion(id="app-version")
+    def loop(self):
+        """Process a packet and add it to the processed queue."""
+        while not self.thread_stop:
+            if not self.tx_queue.empty():
+                packet = self.tx_queue.get()
+                tx.send(packet)
+            else:
+                time.sleep(0.1)
 
 
 class MyPacketDisplay(Widget):
     """Display an APRS packet."""
+
+    DEFAULT_CSS = """
+    MyPacketDisplay {
+        color: $text;
+        width: 100%;
+        height: 8;
+        margin: 1;
+        padding: 0 0 0 0;
+    }
+    """
 
     packet: type[core.Packet]
 
@@ -229,11 +147,8 @@ class MyPacketDisplay(Widget):
         super().__init__()
         self.packet = packet
         self.packet_count = packet_count
-        # self.border_title = f"{packet.from_call} -> {packet.to_call}"
 
-    # def compose(self) -> ComposeResult:
     def render(self) -> RenderResult:
-        # yield Markdown(f"```\n{str(self.packet.human_info)}\n```")
         header = []
         FROM_COLOR = f"b {utils.hex_from_name(self.packet.from_call)}"
         FROM = f"[{FROM_COLOR}]{self.packet.from_call}[/{FROM_COLOR}]"
@@ -297,21 +212,99 @@ class MyPacketDisplay(Widget):
         msg_text.append(raw_header)
         msg_text.append(raw_text)
 
+        title_align = "left"
+        if self.packet.from_call == CONF.callsign:
+            title_align = "right"
+
         return Panel(
             msg_text,
             box=box.ROUNDED,
             padding=(0, 0),
             title=" ".join(header),
-            title_align="left",
+            title_align=title_align,
             # border_style="bright_blue",
             subtitle=pkt_type_text,
             subtitle_align="right",
         )
 
 
-class APRSFilterInput(Screen):
+class HeaderConnection(Horizontal):
+    """Display the title / subtitle in the header."""
+
+    text: Reactive[str] = Reactive("")
+    """The main title text."""
+
+    sub_text = Reactive("")
+    """The sub-title text."""
+
+    def render(self) -> RenderResult:
+        """Render the title and sub-title.
+
+        Returns:
+            The value to render.
+        """
+        text = Text(self.text, no_wrap=True, overflow="ellipsis")
+        if self.sub_text:
+            text.append(" — ")
+            text.append(self.sub_text, "yellow")
+        return text
+
+
+class HeaderVersion(Horizontal):
+    """Display the version in the header."""
+
+    text: Reactive[str] = Reactive("")
+    """The main title text."""
+
+    def render(self) -> RenderResult:
+        return Text(f"APRSD : {aprsd.__version__}", no_wrap=True, overflow="ellipsis")
+
+
+class AppHeader(Horizontal):
+    """The header of the app."""
+
+    def __init__(self):
+        super().__init__()
+
+    def compose(self) -> ComposeResult:
+        yield HeaderConnection(id="app-connection")
+        yield HeaderVersion(id="app-version")
+
+
+class ChatInput(Horizontal):
+    """The input for the chat."""
+
+    DEFAULT_CSS = """
+    ChatInput {
+        dock: bottom;
+        height: 3;
+        width: 100%;
+        margin-bottom: 1;
+        background: $panel;
+    }
+    Input {
+        align: left middle;
+        width: 95%;
+    }
+    """
+
+    @on(Input.Submitted)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Handle the input submitted event."""
+        LOG.info(f"Input submitted: {event.value}")
+        msg_text = event.value
+        self.app.action_send_message(msg_text)
+        self.query_one("#message-input").value = ""
+
+    def compose(self) -> ComposeResult:
+        yield Input(placeholder="Enter message", id="message-input")
+
+
+class AddChatScreen(ModalScreen[str]):
+    """The screen to add a new chat."""
+
     CSS = """
-        APRSFilterInput {
+        AddChatScreen {
             align: center middle;
         }
 
@@ -324,28 +317,27 @@ class APRSFilterInput(Screen):
             background: $surface;
         }
 
-        #input_filter {
+        #input_callsign {
             column-span: 2;
         }
     """
 
     def compose(self) -> ComposeResult:
         with Grid():
-            yield Input(placeholder="Enter APRS filter", id="input_filter")
-            yield Button("Submit", variant="primary", id="submit")
-            yield Button("Cancel", variant="error", id="cancel")
+            yield Input(placeholder="Enter callsign", id="input_callsign")
+            yield Button("Add", id="submit")
+            yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event):
         if event.button.id == "submit":
-            self.input_text = self.query_one("#input_filter").value
-            self.app.filter_changed(self.input_text)
-            self.app.pop_screen()
+            input_text = self.query_one("#input_callsign").value
+            self.dismiss(input_text)
 
 
-class APRSListenerApp(App):
-    """App to display APRS packets in real-time."""
+class APRSChatApp(App):
+    """App to allow APRS chat in the terminal."""
 
-    CSS = """
+    DEFAULT_CSS = """
     AppHeader {
         dock: top;
         width: 100%;
@@ -354,6 +346,15 @@ class APRSListenerApp(App):
         height: 1;
         padding-left: 1;
         margin-bottom: 1;
+    }
+    TabbedContent {
+        margin-top: 1;
+        width: 100%;
+    }
+
+    VerticalScroll {
+        height: auto;
+        width: 100%;
     }
 
     HeaderConnection {
@@ -367,15 +368,6 @@ class APRSListenerApp(App):
     HeaderVersion {
         content-align: right middle;
     }
-
-    MyPacketDisplay {
-        color: $text;
-        width: 100%;
-        height: 8;
-        margin: 1;
-        padding: 0 0 0 0;
-    }
-
     """
 
     BINDINGS = [
@@ -386,29 +378,30 @@ class APRSListenerApp(App):
             tooltip="Switch between light and dark themes",
         ),
         Binding(
-            "ctrl+f",
-            "change_filter",
-            "Change Filter",
-            tooltip="Set the aprs filter for incoming packets",
+            "ctrl+n",
+            "add_new_chat",
+            "Add New Chat",
+            tooltip="Add a chat with a new callsign",
         ),
     ]
 
-    def __init__(self, log_packets: bool = False, filter: str = None):
+    def __init__(self):
         super().__init__()
         self.check_setup()
-        self.init_client(filter)
-        self.filter = ",".join(filter)
-        self.ass = False
+        self.init_client()
 
         # packets to be sent to the UI
         self.processed_queue = queue.Queue()
+        self.tx_queue = queue.Queue()
         self.listen_thread = rx.APRSDRXThread(
             packet_queue=threads.packet_queue,
         )
         self.process_thread = APRSDListenProcessThread(
             packet_queue=threads.packet_queue,
             processed_queue=self.processed_queue,
-            log_packets=log_packets,
+        )
+        self.tx_thread = APRSTXThread(
+            packet_queue=self.tx_queue,
         )
 
     def check_setup(self):
@@ -427,7 +420,7 @@ class APRSListenerApp(App):
             LOG.error("APRS client is not properly configured in config file.")
             sys.exit(-1)
 
-    def init_client(self, filter: str):
+    def init_client(self):
         # Creates the client object
         LOG.info("Creating client connection")
         self.aprs_client = client_factory.create()
@@ -439,30 +432,69 @@ class APRSListenerApp(App):
             print(msg)
             sys.exit(-1)
 
-        LOG.debug(f"Filter messages on aprsis server by '{filter}'")
-        self.aprs_client.set_filter(filter)
-
     def _start_threads(self):
-        ServerThreads().register(self.listen_thread)
-        ServerThreads().register(self.process_thread)
-        ServerThreads().register(keepalive.KeepAliveThread())
-        ServerThreads().start()
+        service.ServiceThreads().register(self.listen_thread)
+        service.ServiceThreads().register(self.process_thread)
+        service.ServiceThreads().register(self.tx_thread)
+        service.ServiceThreads().register(keepalive.KeepAliveThread())
+        service.ServiceThreads().start()
 
-    def action_change_filter(self):
-        self.push_screen(APRSFilterInput(id="aprs-filter-dialog"))
+    def _get_active_callsign(self):
+        """Get the active callsign from the active tab."""
+        active_tab = self.query_one(TabbedContent).active
+        return str(active_tab).replace("tab-", "")
 
-    @work(exclusive=True)
-    async def request_filter(self) -> None:
-        # stop the client?
-        await self.push_screen_wait(APRSFilterInput(id="aprs-filter-dialog"))
+    def _get_scroll_for_callsign(self, callsign: str):
+        """Get the scroll view for a callsign."""
+        try:
+            scroll = self.query_one(f"#{_get_scroll_id(callsign)}")
+            return scroll
+        except Exception as e:
+            LOG.error(f"Error getting scroll for callsign {callsign}: {e}")
+            return None
 
-    def filter_changed(self, filter: str) -> None:
-        LOG.debug(f"Filter_changed to '{filter}'")
-        self.filter = filter
+    def action_add_new_chat(self):
+        """When the user asks to create a chat with a new callsign."""
+        self.push_screen(AddChatScreen(), callback=self._on_add_chat)
+
+    def action_send_message(self, msg_text: str):
+        """Send a message to the APRS server."""
+        # Get the active callsign
+        active_callsign = self._get_active_callsign()
+        # self.notify(f"Sending message '{msg_text}' to {active_callsign}")
+
+        # Create the message packet
+        msg = core.MessagePacket(
+            from_call=CONF.callsign,
+            to_call=active_callsign,
+            message_text=msg_text,
+        )
+        self.processed_queue.put(msg)
+        self.tx_queue.put(msg)
+
+    def _on_add_chat(self, callsign: str) -> None:
+        """Handle the result of the add chat screen."""
+        callsign = callsign.strip().upper()
+        # self.notify(f"Adding new chat with callsign: {callsign}")
+        if callsign:
+            LOG.info(f"Adding new chat with callsign: {callsign}")
+            # get the tabbedcontent and add a new pane
+            tabbed_content = self.query_one(TabbedContent)
+            tabbed_content.add_pane(
+                TabPane(
+                    callsign,
+                    VerticalScroll(id=_get_scroll_id(callsign)),
+                    id=f"tab-{callsign}",
+                )
+            )
+
+        # set the focus on the input
+        self.query_one("#message-input").focus()
 
     def compose(self) -> ComposeResult:
-        yield AppHeader(filter=self.filter)
-        yield VerticalScroll(id="packet-view")
+        yield AppHeader()
+        yield TabbedContent()
+        yield ChatInput()
         yield Footer()
 
     def on_mount(self) -> None:
@@ -480,27 +512,33 @@ class APRSListenerApp(App):
     @work(exclusive=False)
     async def check_packets(self) -> None:
         """Check for new packets in a loop."""
-        packet_view = self.query_one("#packet-view")
-        filter_widget = self.query_one("#app-filter")
         self.packet_count = 0
 
-        while not self.ass:
+        while True:
             try:
                 # Non-blocking queue check
                 packet = self.processed_queue.get_nowait()
                 self.packet_count += 1
-                filter_widget.sub_text = f"{self.packet_count}"
-                await packet_view.mount(
-                    MyPacketDisplay(packet, packet_count=self.packet_count)
-                )
-                # Scroll to bottom
-                packet_view.scroll_end(animate=False)
-                if len(packet_view.children) > 10:
-                    Widget.remove(packet_view.children[0])
+
+                callsign = packet.from_call
+                if packet.from_call == CONF.callsign:
+                    # this is a message we sent.
+                    callsign = packet.to_call
+
+                scroll_view = self._get_scroll_for_callsign(callsign)
+                if scroll_view:
+                    if isinstance(packet, core.MessagePacket):
+                        await scroll_view.mount(
+                            MyPacketDisplay(packet, packet_count=self.packet_count)
+                        )
+                        # self.notify(f"Packet({packet.from_call}): '{packet.message_text}' {scroll_view}")
+                        # Scroll to bottom
+                        scroll_view.scroll_end(animate=False)
+                        if len(scroll_view.children) > 10:
+                            Widget.remove(scroll_view.children[0])
             except queue.Empty:
                 # No packets, wait a bit
                 await asyncio.sleep(0.1)
-        LOG.error("check_packets: done")
 
     def _build_connection_string(self, stats) -> str:
         match stats["transport"]:
@@ -523,15 +561,6 @@ class APRSListenerApp(App):
         while True:
             if self.aprs_client:
                 stats = self.aprs_client.stats()
-                LOG.debug(
-                    f"check_connection: current filter '{self.aprs_client.get_filter()}'"
-                )
-                current_filter = ",".join(self.aprs_client.get_filter())
-                if current_filter != self.filter:
-                    LOG.debug(
-                        f"check_connection: current filter '{current_filter}' != self.filter '{self.filter}'"
-                    )
-                    self.aprs_client.set_filter(self.filter)
             try:
                 connection_widget = self.query_one("#app-connection")
                 connection_string = self._build_connection_string(stats)
@@ -542,10 +571,6 @@ class APRSListenerApp(App):
                 else:
                     connection_widget.text = f"{connection_string}"
                     connection_widget.sub_text = f"{sub_text}"
-
-                filter_widget = self.query_one("#app-filter")
-                filter_widget.text = f"Filter: {self.filter}"
-                filter_widget.sub_text = f"{self.packet_count}"
             except Exception as e:
                 LOG.error(f"check_connection: error: {e}")
                 await asyncio.sleep(1)
@@ -555,17 +580,11 @@ class APRSListenerApp(App):
 
 @cmds.rich.command()
 @cli_helper.add_options(cli_helper.common_options)
-@click.option("--log-packets", is_flag=True, help="Log packets to the console.")
-@click.argument(
-    "filter",
-    nargs=-1,
-    required=True,
-)
 @click.pass_context
 @cli_helper.process_standard_options
-def listen(ctx, log_packets: bool, filter: str):
-    """Listen to APRS packets in the terminal."""
+def chat(ctx):
+    """APRS Chat in the terminal."""
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    app = APRSListenerApp(log_packets=log_packets, filter=filter)
+    app = APRSChatApp()
     app.run()
