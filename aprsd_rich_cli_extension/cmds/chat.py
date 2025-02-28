@@ -324,7 +324,9 @@ class AddChatScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         with Grid():
-            yield Input(placeholder="Enter callsign", id="input_callsign")
+            yield Input(
+                placeholder="Enter callsign", id="input_callsign", max_length=60
+            )
             yield Button("Add", id="submit")
             yield Button("Cancel", id="cancel")
 
@@ -389,6 +391,7 @@ class APRSChatApp(App):
         super().__init__()
         self.check_setup()
         self.init_client()
+        self.chat_binding_count = 0
 
         # packets to be sent to the UI
         self.processed_queue = queue.Queue()
@@ -486,6 +489,12 @@ class APRSChatApp(App):
                     VerticalScroll(id=_get_scroll_id(callsign)),
                     id=f"tab-{callsign}",
                 )
+            )
+            self.chat_binding_count += 1
+            self.bind(
+                f"ctrl-{self.chat_binding_count}",
+                f"show_tab('tab-{callsign}')",
+                description=f"{callsign}",
             )
 
         # set the focus on the input
