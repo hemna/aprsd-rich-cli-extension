@@ -38,8 +38,6 @@ from aprsd.threads import keepalive, rx, service, tx
 from haversine import Unit, haversine
 from loguru import logger
 from oslo_config import cfg
-from rich import box
-from rich.panel import Panel
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult, RenderResult
@@ -52,6 +50,7 @@ from textual.widgets import (
     Button,
     Footer,
     Input,
+    Label,
     TabbedContent,
     TabPane,
 )
@@ -65,6 +64,8 @@ LOG = logging.getLogger("APRSD")
 CONF = cfg.CONF
 LOGU = logger
 F = t.TypeVar("F", bound=t.Callable[..., t.Any])
+
+MYCALLSIGN_COLOR = "yellow"
 
 
 @click.version_option()
@@ -91,18 +92,28 @@ def _get_scroll_id(callsign: str) -> str:
     return f"{callsign}-scroll"
 
 
-class APRSDListenProcessThread(rx.APRSDFilterThread):
+def _get_tab_id(callsign: str) -> str:
+    """Get the tab id for a callsign."""
+    return f"tab-{callsign}"
+
+
+def _get_packet_id(packet: type[core.Packet]) -> str:
+    """Get the packet id for a packet."""
+    return f"_{packet.msgNo}"
+
+
+class APRSDListenProcessThread(rx.APRSDProcessPacketThread):
     def __init__(
         self,
         packet_queue,
         processed_queue,
     ):
-        super().__init__("ListenProcThread", packet_queue)
+        super().__init__(packet_queue=packet_queue)
         # The processed queue are packets that need to be displayed
         # in the UI
         self.processed_queue = processed_queue
 
-    def process_packet(self, packet: type[core.Packet]):
+    def process_our_message_packet(self, packet: type[core.Packet]):
         """Process a packet and add it to the processed queue."""
         self.processed_queue.put(packet)
 
@@ -135,33 +146,40 @@ class MyPacketDisplay(Widget):
     MyPacketDisplay {
         color: $text;
         width: 100%;
-        height: 8;
+        height: 6;
         margin: 1;
         padding: 0 0 0 0;
     }
     """
 
     packet: type[core.Packet]
+    acked: Reactive[bool] = Reactive(False)
 
-    def __init__(self, packet: type[core.Packet], packet_count: int):
-        super().__init__()
+    def __init__(self, packet: type[core.Packet], id: str):
+        super().__init__(id=id)
         self.packet = packet
-        self.packet_count = packet_count
+        self.packet.prepare()
 
-    def render(self) -> RenderResult:
-        header = []
-        FROM_COLOR = f"b {utils.hex_from_name(self.packet.from_call)}"
-        FROM = f"[{FROM_COLOR}]{self.packet.from_call}[/{FROM_COLOR}]"
-        TO_COLOR = f"b {utils.hex_from_name(self.packet.to_call)}"
-        TO = f"[{TO_COLOR}]{self.packet.to_call}[/{TO_COLOR}]"
-        via_color = "b #1AA730"
-        ARROW = f"[{via_color}]\u2192[/{via_color}]"
-        header.append(f"{FROM} {ARROW}")
-        header.append(f"{ARROW}".join(self.packet.path))
-        header.append(f"{ARROW} {TO}")
+    @property
+    def from_color(self):
+        if self.packet.from_call == CONF.callsign:
+            # The packet was sent by us. (TX)
+            return f"{MYCALLSIGN_COLOR}"
+        else:
+            # The packet was sent by someone else. (RX)
+            return f"b {utils.hex_from_name(self.packet.from_call)}"
 
+    @property
+    def to_color(self):
+        if self.packet.from_call == CONF.callsign:
+            # The packet was sent by us. (TX)
+            return f"b {utils.hex_from_name(self.packet.to_call)}"
+        else:
+            # The packet was sent by someone else. (RX)
+            return f"{MYCALLSIGN_COLOR}"
+
+    def _distance_msg(self):
         # is there distance information?
-        distance_msg = None
         if (
             isinstance(self.packet, core.GPSPacket)
             and CONF.latitude
@@ -183,28 +201,47 @@ class MyPacketDisplay(Widget):
                 LOG.error(f"Failed to calculate bearing: {e}")
                 bearing = 0
 
-            distance_msg = (
+            return (
                 f" : {DEGREES_COLOR}{utils.degrees_to_cardinal(bearing, full_string=True)}{DEGREES_COLOR_END} "
                 f"{DISTANCE_COLOR}@ {haversine(my_coords, packet_coords, unit=Unit.MILES):.2f}miles{DISTANCE_COLOR_END}"
             )
 
-        date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        message = str(self.packet.human_info)
+    def _build_title(self):
+        """build the title of the packet."""
+        title = []
+        from_color = self.from_color
+        to_color = self.to_color
+
+        FROM = f"[{from_color}]{self.packet.from_call}[/{from_color}]"
+        TO = f"[{to_color}]{self.packet.to_call}[/{to_color}]"
+        via_color = "b #1AA730"
+        ARROW = f"[{via_color}]\u2192[/{via_color}]"
+        title.append(f"{FROM} {ARROW}")
+        if self.packet.from_call == CONF.callsign:
+            title.append(f"{TO}")
+        else:
+            title.append(f"{ARROW}".join(self.packet.path))
+            title.append(f"{ARROW} {TO}")
+
+        title.append(f":msgNo {self.packet.msgNo}")
+
+        distance_msg = self._distance_msg()
         if distance_msg:
-            header.append(distance_msg)
+            title.append(distance_msg)
+
+        self.border_title = " ".join(title)
+
+    def _build_subtitle(self):
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.border_subtitle = date_str
+        self.styles.border_subtitle_color = "rgb(98,98,98)"
+
+    def compose(self) -> ComposeResult:
+        self._build_title()
+        self._build_subtitle()
 
         msg_text = Text("", style="bright_white")
-
-        date_text = Text(date_str, style="grey39")
-        msg_text.append(date_text)
-        msg_text.append("\n\n")
-        msg_text.append(message)
-
-        class_name = self.packet.__class__.__name__.replace("Packet", "")
-        class_name_color = f"{utils.hex_from_name(class_name)}"
-        pkt_type_text = Text(
-            f"{class_name} ({self.packet_count})", style=f"{class_name_color}"
-        )
+        msg_text.append(str(self.packet.human_info))
 
         raw_header = Text("Raw:", style="grey39")
         raw_text = Text(f"\n{self.packet.raw}", style="grey27")
@@ -212,20 +249,16 @@ class MyPacketDisplay(Widget):
         msg_text.append(raw_header)
         msg_text.append(raw_text)
 
-        title_align = "left"
-        if self.packet.from_call == CONF.callsign:
-            title_align = "right"
+        yield Label(msg_text)
 
-        return Panel(
-            msg_text,
-            box=box.ROUNDED,
-            padding=(0, 0),
-            title=" ".join(header),
-            title_align=title_align,
-            # border_style="bright_blue",
-            subtitle=pkt_type_text,
-            subtitle_align="right",
-        )
+        if self.packet.from_call == CONF.callsign:
+            self.styles.border_title_align = "right"
+            self.styles.border = ("solid", "red")
+            self.styles.border_subtitle_align = "right"
+        else:
+            self.styles.border = ("solid", "green")
+            self.styles.border_title_align = "left"
+            self.styles.border_subtitle_align = "left"
 
 
 class HeaderConnection(Horizontal):
@@ -246,7 +279,7 @@ class HeaderConnection(Horizontal):
         text = Text(self.text, no_wrap=True, overflow="ellipsis")
         if self.sub_text:
             text.append(" — ")
-            text.append(self.sub_text, "yellow")
+            text.append(self.sub_text, MYCALLSIGN_COLOR)
         return text
 
 
@@ -349,13 +382,13 @@ class APRSChatApp(App):
         padding-left: 1;
         margin-bottom: 1;
     }
+
     TabbedContent {
-        margin-top: 1;
         width: 100%;
+        height: 1fr;
     }
 
     VerticalScroll {
-        height: auto;
         width: 100%;
     }
 
@@ -456,6 +489,15 @@ class APRSChatApp(App):
             LOG.error(f"Error getting scroll for callsign {callsign}: {e}")
             return None
 
+    def _get_tab_for_callsign(self, callsign: str):
+        """Get the tab for a callsign."""
+        try:
+            tab = self.query_one(f"#{_get_tab_id(callsign)}")
+            return tab
+        except Exception as e:
+            LOG.error(f"Error getting tab for callsign {callsign}: {e}")
+            return None
+
     def action_add_new_chat(self):
         """When the user asks to create a chat with a new callsign."""
         self.push_screen(AddChatScreen(), callback=self._on_add_chat)
@@ -472,6 +514,7 @@ class APRSChatApp(App):
             to_call=active_callsign,
             message_text=msg_text,
         )
+        msg.prepare(create_msg_number=True)
         self.processed_queue.put(msg)
         self.tx_queue.put(msg)
 
@@ -487,15 +530,17 @@ class APRSChatApp(App):
                 TabPane(
                     callsign,
                     VerticalScroll(id=_get_scroll_id(callsign)),
-                    id=f"tab-{callsign}",
+                    id=_get_tab_id(callsign),
                 )
             )
             self.chat_binding_count += 1
             self.bind(
                 f"ctrl-{self.chat_binding_count}",
-                f"show_tab('tab-{callsign}')",
+                f"show_tab('{_get_tab_id(callsign)}')",
                 description=f"{callsign}",
             )
+            # set the new tab to be active
+            tabbed_content.active = _get_tab_id(callsign)
 
         # set the focus on the input
         self.query_one("#message-input").focus()
@@ -533,18 +578,43 @@ class APRSChatApp(App):
                 if packet.from_call == CONF.callsign:
                     # this is a message we sent.
                     callsign = packet.to_call
+                else:
+                    # make sure there is a tab existing for this callsign
+                    if not self._get_tab_for_callsign(callsign):
+                        self._on_add_chat(callsign)
 
                 scroll_view = self._get_scroll_for_callsign(callsign)
                 if scroll_view:
                     if isinstance(packet, core.MessagePacket):
                         await scroll_view.mount(
-                            MyPacketDisplay(packet, packet_count=self.packet_count)
+                            MyPacketDisplay(packet, id=_get_packet_id(packet))
                         )
                         # self.notify(f"Packet({packet.from_call}): '{packet.message_text}' {scroll_view}")
                         # Scroll to bottom
                         scroll_view.scroll_end(animate=False)
                         if len(scroll_view.children) > 10:
                             Widget.remove(scroll_view.children[0])
+
+                        if self._get_active_callsign() != callsign:
+                            self.notify(f"New message from {callsign}")
+                            # Can we change the color of the tab to red?
+
+                    elif isinstance(packet, core.AckPacket):
+                        # remove the ack packet from the scroll view
+                        self.notify(f"Ack packet: {packet.msgNo}")
+                        try:
+                            pkt_widget = self.query_one(f"#{_get_packet_id(packet)}")
+                            if pkt_widget:
+                                pkt_widget.acked = True
+                        except Exception as e:
+                            LOG.error(f"Error getting packet widget: {e}")
+                else:
+                    # put the packet back in the queue
+                    # the scroll view is not found, so we need to wait a bit
+                    # and try again
+                    self.processed_queue.put(packet)
+                    await asyncio.sleep(0.2)
+
             except queue.Empty:
                 # No packets, wait a bit
                 await asyncio.sleep(0.1)
