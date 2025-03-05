@@ -1,4 +1,4 @@
-aprsd>=4.1.0
+aprsd>=4.1.1
 oslo_config
 click
-textual
+textual>=2.1.0
