@@ -23,13 +23,13 @@ import typing as t
 
 import aprsd
 import click
+from aprsd import cli_helper as aprsd_cli_helper
+from aprsd import client as aprsd_client
 from aprsd import (
-    cli_helper,
     conf,  # noqa: F401
     threads,
     utils,
 )
-from aprsd import client as aprsd_client
 from aprsd.client import client_factory
 from aprsd.packets import core
 from aprsd.stats import collector
@@ -42,22 +42,27 @@ from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult, RenderResult
 from textual.binding import Binding
-from textual.containers import Grid, Horizontal, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import Reactive
-from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import (
-    Button,
     Footer,
     Input,
     Label,
+    RichLog,
     TabbedContent,
     TabPane,
 )
 
 # Import the extension's configuration options
 from aprsd_rich_cli_extension import (
+    cli_helper,
     cmds,  # noqa
+)
+from aprsd_rich_cli_extension import log as log_extension
+from aprsd_rich_cli_extension.components import (
+    add_chat_screen,
+    help_screen,
 )
 
 LOG = logging.getLogger("APRSD")
@@ -418,84 +423,10 @@ class ChatInput(Horizontal):
         yield Input(placeholder="Enter message", id="message-input")
 
 
-class AddChatScreen(ModalScreen[str]):
-    """The screen to add a new chat."""
-
-    CSS = """
-        AddChatScreen {
-            align: center middle;
-        }
-
-        Grid {
-            grid-size: 2 2;
-            padding: 0 1;
-            width: 40;
-            height: 10;
-            border: thick $background 80%;
-            background: $surface;
-        }
-
-        #input_callsign {
-            column-span: 2;
-        }
-    """
-
-    def compose(self) -> ComposeResult:
-        with Grid():
-            yield Input(
-                placeholder="Enter callsign", id="input_callsign", max_length=60
-            )
-            yield Button("Add", id="submit")
-            yield Button("Cancel", id="cancel")
-
-    def on_button_pressed(self, event):
-        if event.button.id == "submit":
-            input_text = self.query_one("#input_callsign").value
-            self.dismiss(input_text)
-
-
 class APRSChatApp(App):
     """App to allow APRS chat in the terminal."""
 
-    DEFAULT_CSS = """
-    AppHeader {
-        dock: top;
-        width: 100%;
-        background: $panel;
-        color: $foreground;
-        height: 1;
-        padding-left: 1;
-        margin-bottom: 1;
-    }
-
-    TabbedContent {
-        width: 100%;
-        height: 1fr;
-    }
-
-    VerticalScroll {
-        width: 100%;
-    }
-
-    HeaderConnection {
-        content-align: left middle;
-    }
-    SpinnerWidget {
-        content-align: left middle;
-    }
-
-    HeaderFilter {
-        content-align: center middle;
-    }
-
-    HeaderVersion {
-        content-align: right middle;
-    }
-
-    #red-tab {
-        color: red;
-    }
-    """
+    CSS_PATH = ["global.tcss", "chat.tcss"]
 
     BINDINGS = [
         Binding(
@@ -510,18 +441,42 @@ class APRSChatApp(App):
             "Add New Chat",
             tooltip="Add a chat with a new callsign",
         ),
+        Binding(
+            "f1",
+            "show_help",
+            "Show Help",
+            tooltip="Show the help screen",
+        ),
+        Binding(
+            "ctrl+l",
+            "show_log",
+            "Show Log",
+            tooltip="Show the log screen",
+        ),
     ]
 
     def __init__(self):
         super().__init__()
+        # Create the queues to be used later by
+        # the threads
+        # the queue used to process packets that are received
+        # from the APRS network
+        self.processed_queue = queue.Queue()
+        # the queue used to send packets to the APRS network
+        self.tx_queue = queue.Queue()
+        # the queue used to notify the user that a beacon has been sent
+        self.beacon_notify_queue = queue.Queue()
+
+        self.callsign_tabs = {}
+
+    def on_mount(self) -> None:
+        """Called when the app is started and ready to go."""
+        # Show the initial splash screen.
         self.check_setup()
         self.init_client()
-        self.chat_binding_count = 0
+        self.chat_binding_count = 1
 
         # packets to be sent to the UI
-        self.processed_queue = queue.Queue()
-        self.beacon_notify_queue = queue.Queue()
-        self.tx_queue = queue.Queue()
         self.listen_thread = rx.APRSDRXThread(
             packet_queue=threads.packet_queue,
         )
@@ -532,6 +487,36 @@ class APRSChatApp(App):
         self.tx_thread = APRSTXThread(
             packet_queue=self.tx_queue,
         )
+
+        self._start_threads()
+
+        # Start checking for packets
+        self.process_packets()
+        self.check_connection()
+        if CONF.enable_beacon:
+            self.check_beacon_notify()
+
+        self._add_rich_log()
+
+    def _add_rich_log(self):
+        """Add a rich log to the app."""
+        tabbed_content = self.query_one(TabbedContent)
+        tab_id = _get_tab_id("log")
+        tabbed_content.add_pane(
+            TabPane(
+                "Log",
+                RichLog(id="log-scroll"),
+                id=tab_id,
+            )
+        )
+        tabbed_content.active = tab_id
+        # now start the worker to process the log queue
+        self.process_log_queue()
+
+    def action_show_log(self):
+        """Show the log screen."""
+        tabbed_content = self.query_one(TabbedContent)
+        tabbed_content.active = _get_tab_id("log")
 
     def check_setup(self):
         # Initialize the client factory and create
@@ -589,6 +574,9 @@ class APRSChatApp(App):
 
     def _get_tab_for_callsign(self, callsign: str):
         """Get the tab for a callsign."""
+        if callsign in self.callsign_tabs:
+            return self.callsign_tabs[callsign]
+
         try:
             tab = self.query_one(f"#{_get_tab_id(callsign)}")
             return tab
@@ -598,7 +586,12 @@ class APRSChatApp(App):
 
     def action_add_new_chat(self):
         """When the user asks to create a chat with a new callsign."""
-        self.push_screen(AddChatScreen(), callback=self._on_add_chat)
+        self.push_screen(add_chat_screen.AddChatScreen(), callback=self._on_add_chat)
+
+    def action_show_help(self):
+        """Show the help screen."""
+        self.notify("Showing help screen")
+        self.push_screen(help_screen.HelpScreen())
 
     def action_send_message(self, msg_text: str):
         """Send a message to the APRS server."""
@@ -623,18 +616,21 @@ class APRSChatApp(App):
     def _on_add_chat(self, callsign: str) -> None:
         """Handle the result of the add chat screen."""
         callsign = callsign.strip().upper()
+        self.notify(f"Adding new chat with callsign: {callsign}")
         # self.notify(f"Adding new chat with callsign: {callsign}")
         if callsign:
             LOG.info(f"Adding new chat with callsign: {callsign}")
             # get the tabbedcontent and add a new pane
-            tabbed_content = self.query_one(TabbedContent)
+            tabbed_content = self.query_one("#tabbed-content")
             tab_id = _get_tab_id(callsign)
+            log_pane = self.query_one(f"#{_get_tab_id('log')}")
             tabbed_content.add_pane(
                 TabPane(
                     callsign,
                     VerticalScroll(id=_get_scroll_id(callsign)),
                     id=tab_id,
-                )
+                ),
+                before=log_pane,
             )
             self.chat_binding_count += 1
             self.bind(
@@ -645,30 +641,16 @@ class APRSChatApp(App):
             )
             # set the new tab to be active
             tabbed_content.active = tab_id
+            self.callsign_tabs[callsign] = self.query_one(f"#{tab_id}")
 
         # set the focus on the input
         self.query_one("#message-input").focus()
 
     def compose(self) -> ComposeResult:
         yield AppHeader()
-        yield TabbedContent()
+        yield TabbedContent(id="tabbed-content")
         yield ChatInput()
         yield Footer()
-
-    def on_mount(self) -> None:
-        """Start the APRS listener threads when app starts."""
-        self._start_threads()
-
-        # Start checking for packets
-        self.process_packets()
-        self.check_connection()
-        if CONF.enable_beacon:
-            self.check_beacon_notify()
-        # self.add_rich_log()
-
-    def add_rich_log(self):
-        # self.add_rich_log = RichLog()
-        self.add_rich_log.write("Hello, world!")
 
     # def on_key(self, event: events.Key) -> None:
     #    self.notify(f"Key pressed: {event}")
@@ -677,6 +659,21 @@ class APRSChatApp(App):
     def on_unmount(self) -> None:
         """Stop threads when app exits."""
         threads.APRSDThreadList().stop_all()
+
+    @work(exclusive=False)
+    async def process_log_queue(self) -> None:
+        """Process the log queue."""
+        while True:
+            try:
+                record = log_extension.textual_log_queue.get_nowait()
+                rich_log = self.query_one("#log-scroll")
+                rich_log.write(record.getMessage(), expand=True)
+            except queue.Empty:
+                await asyncio.sleep(0.1)
+            except Exception:
+                await asyncio.sleep(0.1)
+
+        self.notify("Log queue processing stopped")
 
     @work(exclusive=False)
     async def process_packets(self) -> None:
@@ -798,12 +795,12 @@ class APRSChatApp(App):
 
 
 @cmds.rich.command()
-@cli_helper.add_options(cli_helper.common_options)
+@aprsd_cli_helper.add_options(aprsd_cli_helper.common_options)
 @click.pass_context
 @cli_helper.process_standard_options
 def chat(ctx):
     """APRS Chat in the terminal."""
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    app = APRSChatApp()
-    app.run()
+    tui = APRSChatApp()
+    tui.run()
