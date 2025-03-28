@@ -30,7 +30,7 @@ from aprsd import (
     utils,
 )
 from aprsd import client as aprsd_client
-from aprsd.client import client_factory
+from aprsd.client.client import APRSDClient
 from aprsd.packets import core
 from aprsd.packets import log as packet_log
 from aprsd.stats import collector
@@ -414,23 +414,19 @@ class APRSListenerApp(App):
     def check_setup(self):
         # Initialize the client factory and create
         # The correct client object ready for use
-        if not client_factory.is_client_enabled():
+        if not APRSDClient().is_enabled:
             LOG.error("No Clients are enabled in config.")
             sys.exit(-1)
 
         # Make sure we have 1 client transport enabled
-        if not client_factory.is_client_enabled():
+        if not APRSDClient().is_configured:
             LOG.error("No Clients are enabled in config.")
-            sys.exit(-1)
-
-        if not client_factory.is_client_configured():
-            LOG.error("APRS client is not properly configured in config file.")
             sys.exit(-1)
 
     def init_client(self, filter: str):
         # Creates the client object
         LOG.info("Creating client connection")
-        self.aprs_client = client_factory.create()
+        self.aprs_client = APRSDClient()
         LOG.info(self.aprs_client)
         if not self.aprs_client.login_success:
             # We failed to login, will just quit!
@@ -548,6 +544,7 @@ class APRSListenerApp(App):
                 filter_widget.sub_text = f"{self.packet_count}"
             except Exception as e:
                 LOG.error(f"check_connection: error: {e}")
+                raise e
                 await asyncio.sleep(1)
 
             await asyncio.sleep(1)
