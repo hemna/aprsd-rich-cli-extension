@@ -62,6 +62,7 @@ from aprsd_rich_cli_extension.components import (
     help_screen,
     packet_widget,
 )
+from aprsd_rich_cli_extension.components import utils as components_utils
 
 LOG = logging.getLogger("APRSD")
 CONF = cfg.CONF
@@ -96,11 +97,6 @@ def _get_scroll_id(callsign: str) -> str:
 def _get_tab_id(callsign: str) -> str:
     """Get the tab id for a callsign."""
     return f"tab-{callsign}"
-
-
-def _get_packet_id(packet: type[core.Packet]) -> str:
-    """Get the packet id for a packet."""
-    return f"_{packet.msgNo}"
 
 
 class APRSDListenProcessThread(rx.APRSDProcessPacketThread):
@@ -295,10 +291,10 @@ class APRSChatApp(App):
 
     BINDINGS = [
         Binding(
-            "ctrl+d",
-            "toggle_dark",
-            "Toggle Dark",
-            tooltip="Switch between light and dark themes",
+            "ctrl+q",
+            "quit",
+            "Quit",
+            tooltip="Quit the app",
         ),
         Binding(
             "ctrl+n",
@@ -307,16 +303,22 @@ class APRSChatApp(App):
             tooltip="Add a chat with a new callsign",
         ),
         Binding(
-            "f1",
-            "show_help",
-            "Show Help",
-            tooltip="Show the help screen",
+            "ctrl+d",
+            "toggle_dark",
+            "Toggle Dark",
+            tooltip="Switch between light and dark themes",
         ),
         Binding(
             "ctrl+l",
             "show_log",
             "Show Log",
             tooltip="Show the log screen",
+        ),
+        Binding(
+            "f1",
+            "show_help",
+            "Show Help",
+            tooltip="Show the help screen",
         ),
     ]
 
@@ -558,7 +560,9 @@ class APRSChatApp(App):
 
                 if isinstance(packet, core.AckPacket):
                     try:
-                        pkt_widget = self.query_one(f"#{_get_packet_id(packet)}")
+                        pkt_widget = self.query_one(
+                            f"#{components_utils._get_packet_id(packet)}"
+                        )
                         if pkt_widget:
                             pkt_widget.acked = True
                             pkt_widget.refresh(recompose=True)
@@ -570,7 +574,7 @@ class APRSChatApp(App):
                     if isinstance(packet, core.MessagePacket):
                         await scroll_view.mount(
                             packet_widget.APRSDPacketWidget(
-                                packet, id=_get_packet_id(packet)
+                                packet, id=components_utils._get_packet_id(packet)
                             )
                         )
                         # self.notify(f"Packet({packet.from_call}): '{packet.message_text}' {scroll_view}")

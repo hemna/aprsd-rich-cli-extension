@@ -48,7 +48,7 @@ def process_standard_options(f: F) -> F:
         }
         log.setup_logging(
             ctx.obj["loglevel"],
-            ctx.obj["quiet"],
+            quiet=True,
             custom_handler=custom_handler,
         )
         if CONF.trace_enabled:

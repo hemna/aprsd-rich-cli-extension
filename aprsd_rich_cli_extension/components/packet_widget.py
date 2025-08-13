@@ -70,10 +70,10 @@ class APRSDPacketWidget(Widget):
             and self.packet.latitude
             and self.packet.longitude
         ):
-            DEGREES_COLOR = "[b bright_black]"
-            DEGREES_COLOR_END = "[/b bright_black]"
-            DISTANCE_COLOR = "[b bright_yellow]"
-            DISTANCE_COLOR_END = "[/b bright_yellow]"
+            DEGREES_COLOR = "[b #62C2DD]"
+            DEGREES_COLOR_END = "[/b #62C2DD]"
+            DISTANCE_COLOR = "[orange]"
+            DISTANCE_COLOR_END = "[/orange]"
             my_coords = (float(CONF.latitude), float(CONF.longitude))
             packet_coords = (float(self.packet.latitude), float(self.packet.longitude))
             try:
@@ -84,8 +84,11 @@ class APRSDPacketWidget(Widget):
                 LOG.error(f"Failed to calculate bearing: {e}")
                 bearing = 0
 
+            # cardinal = utils.degrees_to_cardinal(bearing, full_string=True)
+            # cardinal_color = f"b {utils.hex_from_name(cardinal)}"
+
             return (
-                f" : {DEGREES_COLOR}{utils.degrees_to_cardinal(bearing, full_string=True)}{DEGREES_COLOR_END} "
+                f"{DEGREES_COLOR}{utils.degrees_to_cardinal(bearing, full_string=True)}{DEGREES_COLOR_END} "
                 f"{DISTANCE_COLOR}@ {haversine(my_coords, packet_coords, unit=Unit.MILES):.2f}miles{DISTANCE_COLOR_END}"
             )
 
@@ -106,11 +109,12 @@ class APRSDPacketWidget(Widget):
             title.append(f"{ARROW}".join(self.packet.path))
             title.append(f"{ARROW} {TO}")
 
-        title.append(f":msgNo {self.packet.msgNo}")
+        if self.packet.msgNo:
+            title.append(f":{self.packet.msgNo}")
 
         distance_msg = self._distance_msg()
         if distance_msg:
-            title.append(distance_msg)
+            title.append(f" : {distance_msg}")
 
         if self.is_tx:
             if self.acked:
@@ -121,8 +125,12 @@ class APRSDPacketWidget(Widget):
 
     def _build_subtitle(self):
         date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.border_subtitle = date_str
-        self.styles.border_subtitle_color = "rgb(98,98,98)"
+        pkt_type = self.packet.__class__.__name__
+        pkt_type_color = f"b {utils.hex_from_name(pkt_type)}"
+        self.border_subtitle = (
+            f"{date_str} [{pkt_type_color}]{pkt_type}[/{pkt_type_color}]"
+        )
+        self.styles.border_subtitle_color = "rgb(150,150,150)"
 
     def compose(self) -> ComposeResult:
         self._build_title()

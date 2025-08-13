@@ -1,0 +1,85 @@
+/* VARIABLES */
+$border-color-nofocus: $panel;
+$border-title-color-nofocus: $panel;
+$border-color-focus: $primary;
+$border-title-color-focus: $primary;
+
+
+/* ALL WIDGETS */
+AppHeader {
+    dock: top;
+    width: 100%;
+    background: $panel;
+    color: $foreground;
+    height: 1;
+    padding-left: 1;
+    margin-bottom: 1;
+}
+
+HeaderConnection {
+    content-align: left middle;
+}
+
+HeaderFilter {
+    content-align: center middle;
+}
+
+HeaderVersion {
+    content-align: right middle;
+}
+
+
+TabbedContent {
+    width: 100%;
+    height: 1fr;
+}
+
+VerticalScroll {
+    width: 100%;
+    background: $background;
+}
+
+SpinnerWidget {
+    content-align: left middle;
+}
+
+#red-tab {
+    color: red;
+}
+
+HelpScreen {
+    align: center middle;
+    padding: 0;
+    background: $background;
+}
+#help_outer {
+    border: round $border-color-focus;
+    background: $background;
+    margin: 2 4;
+    padding: 1 2;
+    max-width: 88;
+}
+#help_header {
+    dock: top;
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+#help_inner {
+    border: round $border-color-nofocus;
+    padding: 0 0 0 0;
+}
+#help_info {
+    padding: 0 0 0 0;
+}
+#help_footer {
+    dock: bottom;
+    color: $text-muted;
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+RichLog {
+    background: $background;
+    width: 100%;
+    min-width: 100%;
+}
