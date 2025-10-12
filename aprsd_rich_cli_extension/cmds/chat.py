@@ -64,10 +64,10 @@ from aprsd_rich_cli_extension.components import (
 )
 from aprsd_rich_cli_extension.components import utils as components_utils
 
-LOG = logging.getLogger("APRSD")
+LOG = logging.getLogger('APRSD')
 CONF = cfg.CONF
 LOGU = logger
-F = t.TypeVar("F", bound=t.Callable[..., t.Any])
+F = t.TypeVar('F', bound=t.Callable[..., t.Any])
 
 
 @click.version_option()
@@ -77,10 +77,11 @@ def cli(ctx):
 
 
 def signal_handler(sig, frame):
+    collector.Collector().stop_all()
     threads.APRSDThreadList().stop_all()
-    if "subprocess" not in str(frame):
+    if 'subprocess' not in str(frame):
         LOG.info(
-            "Ctrl+C, Sending all threads exit! Can take up to 10 seconds {}".format(
+            'Ctrl+C, Sending all threads exit! Can take up to 10 seconds {}'.format(
                 datetime.datetime.now(),
             ),
         )
@@ -91,12 +92,12 @@ def signal_handler(sig, frame):
 
 def _get_scroll_id(callsign: str) -> str:
     """Get the scroll id for a callsign."""
-    return f"{callsign}-scroll"
+    return f'{callsign}-scroll'
 
 
 def _get_tab_id(callsign: str) -> str:
     """Get the tab id for a callsign."""
-    return f"tab-{callsign}"
+    return f'tab-{callsign}'
 
 
 class APRSDListenProcessThread(rx.APRSDProcessPacketThread):
@@ -128,7 +129,7 @@ class APRSTXThread(aprsd_threads.APRSDThread):
     """
 
     def __init__(self, packet_queue):
-        super().__init__("APRSTXThread")
+        super().__init__('APRSTXThread')
         self.tx_queue = packet_queue
 
     def loop(self):
@@ -150,19 +151,19 @@ class MyBeaconSendThread(aprsd_threads.APRSDThread):
     _loop_cnt: int = 1
 
     def __init__(self, notify_queue):
-        super().__init__("BeaconSendThread")
+        super().__init__('BeaconSendThread')
         self._loop_cnt = 1
         self.notify_queue = notify_queue
         # Make sure Latitude and Longitude are set.
         if not CONF.latitude or not CONF.longitude:
             LOG.error(
-                "Latitude and Longitude are not set in the config file."
-                "Beacon will not be sent and thread is STOPPED.",
+                'Latitude and Longitude are not set in the config file.'
+                'Beacon will not be sent and thread is STOPPED.',
             )
             self.stop()
         LOG.info(
-            "Beacon thread is running and will send "
-            f"beacons every {CONF.beacon_interval} seconds.",
+            'Beacon thread is running and will send '
+            f'beacons every {CONF.beacon_interval} seconds.',
         )
 
     def loop(self):
@@ -170,19 +171,19 @@ class MyBeaconSendThread(aprsd_threads.APRSDThread):
         if self._loop_cnt % CONF.beacon_interval == 0:
             pkt = core.BeaconPacket(
                 from_call=CONF.callsign,
-                to_call="APRS",
+                to_call='APRS',
                 latitude=float(CONF.latitude),
                 longitude=float(CONF.longitude),
-                comment="APRSD GPS Beacon",
+                comment='APRSD GPS Beacon',
                 symbol=CONF.beacon_symbol,
             )
             try:
                 # Only send it once
                 pkt.retry_count = 1
                 tx.send(pkt, direct=True)
-                self.notify_queue.put("Beacon sent")
+                self.notify_queue.put('Beacon sent')
             except Exception as e:
-                LOG.error(f"Failed to send beacon: {e}")
+                LOG.error(f'Failed to send beacon: {e}')
                 APRSDClient().reset()
                 time.sleep(5)
 
@@ -197,10 +198,10 @@ class MyBeaconSendThread(aprsd_threads.APRSDThread):
 class HeaderConnection(Horizontal):
     """Display the title / subtitle in the header."""
 
-    text: Reactive[str] = Reactive("")
+    text: Reactive[str] = Reactive('')
     """The main title text."""
 
-    sub_text = Reactive("")
+    sub_text = Reactive('')
     """The sub-title text."""
 
     def render(self) -> RenderResult:
@@ -209,9 +210,9 @@ class HeaderConnection(Horizontal):
         Returns:
             The value to render.
         """
-        text = Text(self.text, no_wrap=True, overflow="ellipsis")
+        text = Text(self.text, no_wrap=True, overflow='ellipsis')
         if self.sub_text:
-            text.append(" — ")
+            text.append(' — ')
             text.append(self.sub_text, packet_widget.MYCALLSIGN_COLOR)
         return text
 
@@ -219,11 +220,11 @@ class HeaderConnection(Horizontal):
 class HeaderVersion(Horizontal):
     """Display the version in the header."""
 
-    text: Reactive[str] = Reactive("")
+    text: Reactive[str] = Reactive('')
     """The main title text."""
 
     def render(self) -> RenderResult:
-        return Text(f"APRSD : {aprsd.__version__}", no_wrap=True, overflow="ellipsis")
+        return Text(f'APRSD : {aprsd.__version__}', no_wrap=True, overflow='ellipsis')
 
 
 class HeaderEarth(Horizontal):
@@ -232,7 +233,7 @@ class HeaderEarth(Horizontal):
     def render(self) -> RenderResult:
         # 🌍
         # 🌏
-        return Text("🌎 ")
+        return Text('🌎 ')
 
 
 class AppHeader(Horizontal):
@@ -248,11 +249,11 @@ class AppHeader(Horizontal):
         super().__init__()
 
     def compose(self) -> ComposeResult:
-        yield HeaderConnection(id="app-connection")
-        earth = HeaderEarth(id="app-earth")
+        yield HeaderConnection(id='app-connection')
+        earth = HeaderEarth(id='app-earth')
         earth.display = False
         yield earth
-        yield HeaderVersion(id="app-version")
+        yield HeaderVersion(id='app-version')
 
 
 class ChatInput(Horizontal):
@@ -275,50 +276,50 @@ class ChatInput(Horizontal):
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle the input submitted event."""
-        LOG.info(f"Input submitted: {event.value}")
+        LOG.info(f'Input submitted: {event.value}')
         msg_text = event.value
         self.app.action_send_message(msg_text)
-        self.query_one("#message-input").value = ""
+        self.query_one('#message-input').value = ''
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Enter message", id="message-input")
+        yield Input(placeholder='Enter message', id='message-input')
 
 
 class APRSChatApp(App):
     """App to allow APRS chat in the terminal."""
 
-    CSS_PATH = ["global.tcss", "chat.tcss"]
+    CSS_PATH = ['global.tcss', 'chat.tcss']
 
     BINDINGS = [
         Binding(
-            "ctrl+q",
-            "quit",
-            "Quit",
-            tooltip="Quit the app",
+            'ctrl+q',
+            'quit',
+            'Quit',
+            tooltip='Quit the app',
         ),
         Binding(
-            "ctrl+n",
-            "add_new_chat",
-            "Add New Chat",
-            tooltip="Add a chat with a new callsign",
+            'ctrl+n',
+            'add_new_chat',
+            'Add New Chat',
+            tooltip='Add a chat with a new callsign',
         ),
         Binding(
-            "ctrl+d",
-            "toggle_dark",
-            "Toggle Dark",
-            tooltip="Switch between light and dark themes",
+            'ctrl+d',
+            'toggle_dark',
+            'Toggle Dark',
+            tooltip='Switch between light and dark themes',
         ),
         Binding(
-            "ctrl+l",
-            "show_log",
-            "Show Log",
-            tooltip="Show the log screen",
+            'ctrl+l',
+            'show_log',
+            'Show Log',
+            tooltip='Show the log screen',
         ),
         Binding(
-            "f1",
-            "show_help",
-            "Show Help",
-            tooltip="Show the help screen",
+            'f1',
+            'show_help',
+            'Show Help',
+            tooltip='Show the help screen',
         ),
     ]
 
@@ -368,11 +369,11 @@ class APRSChatApp(App):
     def _add_rich_log(self):
         """Add a rich log to the app."""
         tabbed_content = self.query_one(TabbedContent)
-        tab_id = _get_tab_id("log")
+        tab_id = _get_tab_id('log')
         tabbed_content.add_pane(
             TabPane(
-                "Log",
-                RichLog(id="log-scroll"),
+                'Log',
+                RichLog(id='log-scroll'),
                 id=tab_id,
             )
         )
@@ -383,28 +384,28 @@ class APRSChatApp(App):
     def action_show_log(self):
         """Show the log screen."""
         tabbed_content = self.query_one(TabbedContent)
-        tabbed_content.active = _get_tab_id("log")
+        tabbed_content.active = _get_tab_id('log')
 
     def check_setup(self):
         # Initialize the client factory and create
         # The correct client object ready for use
         if not APRSDClient().is_enabled:
-            LOG.error("No Clients are enabled in config.")
+            LOG.error('No Clients are enabled in config.')
             sys.exit(-1)
 
         # Make sure we have 1 client transport enabled
         if not APRSDClient().is_configured:
-            LOG.error("APRS client is not properly configured in config file.")
+            LOG.error('APRS client is not properly configured in config file.')
             sys.exit(-1)
 
     def init_client(self):
         # Creates the client object
-        LOG.info("Creating client connection")
+        LOG.info('Creating client connection')
         self.aprs_client = APRSDClient()
         LOG.info(self.aprs_client)
         if not self.aprs_client.login_success:
             # We failed to login, will just quit!
-            msg = f"Login Failure: {self.aprs_client.login_failure}"
+            msg = f'Login Failure: {self.aprs_client.login_failure}'
             LOG.error(msg)
             print(msg)
             sys.exit(-1)
@@ -415,7 +416,7 @@ class APRSChatApp(App):
         service.ServiceThreads().register(self.tx_thread)
         service.ServiceThreads().register(keepalive.KeepAliveThread())
         if CONF.enable_beacon:
-            LOG.info("Beacon Enabled.  Starting Beacon thread.")
+            LOG.info('Beacon Enabled.  Starting Beacon thread.')
             service.ServiceThreads().register(
                 MyBeaconSendThread(self.beacon_notify_queue)
             )
@@ -424,15 +425,15 @@ class APRSChatApp(App):
     def _get_active_callsign(self):
         """Get the active callsign from the active tab."""
         active_tab = self.query_one(TabbedContent).active
-        return str(active_tab).replace("tab-", "")
+        return str(active_tab).replace('tab-', '')
 
     def _get_scroll_for_callsign(self, callsign: str):
         """Get the scroll view for a callsign."""
         try:
-            scroll = self.query_one(f"#{_get_scroll_id(callsign)}")
+            scroll = self.query_one(f'#{_get_scroll_id(callsign)}')
             return scroll
         except Exception as e:
-            LOG.error(f"Error getting scroll for callsign {callsign}: {e}")
+            LOG.error(f'Error getting scroll for callsign {callsign}: {e}')
             return None
 
     def _get_tab_for_callsign(self, callsign: str):
@@ -441,10 +442,10 @@ class APRSChatApp(App):
             return self.callsign_tabs[callsign]
 
         try:
-            tab = self.query_one(f"#{_get_tab_id(callsign)}")
+            tab = self.query_one(f'#{_get_tab_id(callsign)}')
             return tab
         except Exception as e:
-            LOG.error(f"Error getting tab for callsign {callsign}: {e}")
+            LOG.error(f'Error getting tab for callsign {callsign}: {e}')
             return None
 
     def action_add_new_chat(self):
@@ -453,7 +454,7 @@ class APRSChatApp(App):
 
     def action_show_help(self):
         """Show the help screen."""
-        self.notify("Showing help screen")
+        self.notify('Showing help screen')
         self.push_screen(help_screen.HelpScreen())
 
     def action_send_message(self, msg_text: str):
@@ -479,14 +480,14 @@ class APRSChatApp(App):
     def _on_add_chat(self, callsign: str) -> None:
         """Handle the result of the add chat screen."""
         callsign = callsign.strip().upper()
-        self.notify(f"Adding new chat with callsign: {callsign}")
+        self.notify(f'Adding new chat with callsign: {callsign}')
         # self.notify(f"Adding new chat with callsign: {callsign}")
         if callsign:
-            LOG.info(f"Adding new chat with callsign: {callsign}")
+            LOG.info(f'Adding new chat with callsign: {callsign}')
             # get the tabbedcontent and add a new pane
-            tabbed_content = self.query_one("#tabbed-content")
+            tabbed_content = self.query_one('#tabbed-content')
             tab_id = _get_tab_id(callsign)
-            log_pane = self.query_one(f"#{_get_tab_id('log')}")
+            log_pane = self.query_one(f'#{_get_tab_id("log")}')
             tabbed_content.add_pane(
                 TabPane(
                     callsign,
@@ -498,20 +499,20 @@ class APRSChatApp(App):
             self.chat_binding_count += 1
             self.bind(
                 # Bind the chat tab to an F key
-                f"f{self.chat_binding_count}",
+                f'f{self.chat_binding_count}',
                 f"show_tab('{tab_id}')",
-                description=f"{callsign}",
+                description=f'{callsign}',
             )
             # set the new tab to be active
             tabbed_content.active = tab_id
-            self.callsign_tabs[callsign] = self.query_one(f"#{tab_id}")
+            self.callsign_tabs[callsign] = self.query_one(f'#{tab_id}')
 
         # set the focus on the input
-        self.query_one("#message-input").focus()
+        self.query_one('#message-input').focus()
 
     def compose(self) -> ComposeResult:
         yield AppHeader()
-        yield TabbedContent(id="tabbed-content")
+        yield TabbedContent(id='tabbed-content')
         yield ChatInput()
         yield Footer()
 
@@ -529,14 +530,14 @@ class APRSChatApp(App):
         while True:
             try:
                 record = log_extension.textual_log_queue.get_nowait()
-                rich_log = self.query_one("#log-scroll")
+                rich_log = self.query_one('#log-scroll')
                 rich_log.write(record.getMessage(), expand=True)
             except queue.Empty:
                 await asyncio.sleep(0.1)
             except Exception:
                 await asyncio.sleep(0.1)
 
-        self.notify("Log queue processing stopped")
+        self.notify('Log queue processing stopped')
 
     @work(exclusive=False)
     async def process_packets(self) -> None:
@@ -561,13 +562,13 @@ class APRSChatApp(App):
                 if isinstance(packet, core.AckPacket):
                     try:
                         pkt_widget = self.query_one(
-                            f"#{components_utils._get_packet_id(packet)}"
+                            f'#{components_utils._get_packet_id(packet)}'
                         )
                         if pkt_widget:
                             pkt_widget.acked = True
                             pkt_widget.refresh(recompose=True)
                     except Exception as e:
-                        LOG.error(f"Error getting packet widget: {e}")
+                        LOG.error(f'Error getting packet widget: {e}')
 
                 scroll_view = self._get_scroll_for_callsign(callsign)
                 if scroll_view:
@@ -584,17 +585,17 @@ class APRSChatApp(App):
                             Widget.remove(scroll_view.children[0])
 
                         if self._get_active_callsign() != callsign:
-                            self.notify(f"New message from {callsign}")
+                            self.notify(f'New message from {callsign}')
                             # Can we change the color of the tab to red?
                             tab_id = _get_tab_id(callsign)
-                            tab = self.query_one(f"#{tab_id}")
+                            tab = self.query_one(f'#{tab_id}')
                             if tab:
-                                tab.styles.background = "red"
-                                self.notify(f"Tab: {tab.classes}")
+                                tab.styles.background = 'red'
+                                self.notify(f'Tab: {tab.classes}')
                                 # tab.refresh(recompose=True)
-                            ass = self.query(f"#{callsign}")
+                            ass = self.query(f'#{callsign}')
                             for a in ass:
-                                self.notify(f"Child: {a}")
+                                self.notify(f'Child: {a}')
                 else:
                     # put the packet back in the queue
                     # the scroll view is not found, so we need to wait a bit
@@ -618,24 +619,24 @@ class APRSChatApp(App):
     @work(exclusive=False)
     async def _update_earth(self):
         """Show the earth icon for 2 seconds when we send a beacon."""
-        earth = self.query_one("#app-earth")
+        earth = self.query_one('#app-earth')
         earth.display = not earth.display
         await asyncio.sleep(2)
         earth.display = not earth.display
 
     def _build_connection_string(self, stats) -> str:
-        match stats["transport"]:
+        match stats['transport']:
             case aprsd_client.TRANSPORT_APRSIS:
-                transport_name = "APRS-IS"
-                connection_string = f"{transport_name} : {stats['server_string']}"
+                transport_name = 'APRS-IS'
+                connection_string = f'{transport_name} : {stats["server_string"]}'
             case aprsd_client.TRANSPORT_TCPKISS:
-                transport_name = "TCP/KISS"
+                transport_name = 'TCP/KISS'
                 connection_string = (
-                    f"{transport_name} : {CONF.kiss_tcp.host}:{CONF.kiss_tcp.port}"
+                    f'{transport_name} : {CONF.kiss_tcp.host}:{CONF.kiss_tcp.port}'
                 )
             case aprsd_client.TRANSPORT_SERIALKISS:
-                transport_name = "Serial/KISS"
-                connection_string = f"{transport_name} : {CONF.kiss_serial.device}"
+                transport_name = 'Serial/KISS'
+                connection_string = f'{transport_name} : {CONF.kiss_serial.device}'
         return connection_string
 
     @work(exclusive=False)
@@ -645,17 +646,17 @@ class APRSChatApp(App):
             if self.aprs_client:
                 stats = self.aprs_client.stats()
             try:
-                connection_widget = self.query_one("#app-connection")
+                connection_widget = self.query_one('#app-connection')
                 connection_string = self._build_connection_string(stats)
                 sub_text = CONF.callsign
                 if not self.listen_thread.is_alive():
-                    connection_widget.text = "Connection Lost"
-                    connection_widget.sub_text = ""
+                    connection_widget.text = 'Connection Lost'
+                    connection_widget.sub_text = ''
                 else:
-                    connection_widget.text = f"{connection_string}"
-                    connection_widget.sub_text = f"{sub_text}"
+                    connection_widget.text = f'{connection_string}'
+                    connection_widget.sub_text = f'{sub_text}'
             except Exception as e:
-                LOG.error(f"check_connection: error: {e}")
+                LOG.error(f'check_connection: error: {e}')
                 await asyncio.sleep(1)
 
             await asyncio.sleep(1)
