@@ -1,4 +1,4 @@
-REQUIREMENTS_TXT ?= requirements.txt requirements-dev.txt
+#REQUIREMENTS_TXT ?= requirements.txt requirements-dev.txt
 .DEFAULT_GOAL := help
 
 .PHONY: help dev test
@@ -11,6 +11,34 @@ Makefile.venv:
 	echo "147b164f0cbbbe4a2740dcca6c9adb6e9d8d15b895be3998697aa6a821a277d8 *Makefile.fetched" \
 		| sha256sum --check - \
 		&& mv Makefile.fetched Makefile.venv
+
+ifndef UV
+
+# Try to find uv in PATH
+_UV_OPTION:=$(shell command -v uv 2>/dev/null || which uv 2>/dev/null)
+ifeq ($(origin _UV_OPTION),file)
+# uv was found via which/command -v
+UV=$(_UV_OPTION)
+$(info Using uv: $(UV))
+else
+# Try default uv command
+_UV_TEST:=uv
+ifeq (ok,$(shell $(_UV_TEST) -c "print('ok')" 2>/dev/null))
+UV=$(_UV_TEST)
+$(info Using uv: $(UV))
+else
+$(error uv executable not found. Please install uv from https://docs.astral.sh/uv/getting-started/installation/ or set UV=/path/to/uv)
+endif
+endif
+endif
+
+# Override default venv packages for uv virtualenv
+$(VENV):
+	$(UV) venv
+	$(shell source .venv/bin/activate)
+	$(UV) sync
+	$(UV) pip install pip
+	$(shell pwd)
 
 help:	# Help for the Makefile
 	@egrep -h '\s##\s' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -33,7 +61,7 @@ clean-build: ## remove build artifacts
 	rm -fr dist/
 	rm -fr .eggs/
 	find . -name '*.egg-info' -exec rm -fr {} +
-	find . -name '*.egg' -exec rm -f {} +
+	find . -name '*.egg' -exec rm -fr {} +
 
 clean-pyc: ## remove Python file artifacts
 	find . -name '*.pyc' -exec rm -f {} +
@@ -52,6 +80,10 @@ coverage: ## check code coverage quickly with the default Python
 	coverage report -m
 	coverage html
 	$(BROWSER) htmlcov/index.html
+
+changelog: dev
+	npm i -g auto-changelog
+	auto-changelog -l false --sort-commits date -o ChangeLog.md
 
 test: dev  ## Run all the tox tests
 	tox -p all
