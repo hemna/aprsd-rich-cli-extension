@@ -1,4 +1,4 @@
-APRSD CLI UI 
+APRSD CLI UI
 ============
 
 [![PyPI](https://img.shields.io/pypi/v/aprsd-rich-cli-extension.svg)](https://pypi.org/project/aprsd-rich-cli-extension/)
@@ -20,27 +20,56 @@ APRSD CLI UI
 > [!NOTE]
 > Star this repo to follow our progress! This code is under active development, and contributions are both welcomed and appreciated. See [CONTRIBUTING.md](<https://github.com/craigerl/aprsd/blob/master/CONTRIBUTING.md>) for details.
 
-# Features
+# What is APRSD Rich CLI Extension?
 
--   TODO
+APRSD Rich CLI Extension provides beautiful, interactive terminal UI versions of APRSD commands using the [Textual](https://textual.textualize.io/) library. This extension transforms the traditional command-line APRS experience into a modern, user-friendly interface.
 
-# Requirements
+## Features
 
--   TODO
+The extension provides rich terminal UIs for:
 
-# Installation
+- **APRS Chat** - An interactive chat interface for sending and receiving APRS messages in real-time
+- **APRS Listen** - A live packet monitor showing incoming APRS packets with detailed information
+- **Packet Filtering** - Advanced filtering and search capabilities
+- **Real-time Updates** - Live updates as packets are received
 
-You can install *APRSD CLI UI* via
-[pip](https://pip.pypa.io/) from [PyPI](https://pypi.org/):
+![Screenshot](screenshot.png)
+
+## Requirements
+
+- Python >=3.10
+- APRSD >=4.2.0
+- Textual (installed automatically)
+
+## Installation
+
+You can install *APRSD CLI UI* via [pip](https://pip.pypa.io/) from [PyPI](https://pypi.org/) or using [uv](https://docs.astral.sh/uv/):
 
 ``` console
 $ pip install aprsd-rich-cli-extension
 ```
 
-# Usage
+or with uv:
 
-Please see the [Command-line Reference](https://aprsd-rich-cli-extension.readthedocs.io/en/latest/usage.html)
-for details.
+``` console
+$ uv pip install aprsd-rich-cli-extension
+```
+
+## Usage
+
+Once installed, the extension adds new subcommands to the `aprsd` CLI:
+
+- `aprsd chat` - Launch the interactive APRS chat interface
+- `aprsd listen` - Launch the live APRS packet listener
+
+You can use the built-in help to see all available options:
+
+``` console
+$ aprsd chat --help
+$ aprsd listen --help
+```
+
+For more detailed usage information, please see the [Command-line Reference](https://aprsd-rich-cli-extension.readthedocs.io/en/latest/usage.html).
 
 # Contributing
 
